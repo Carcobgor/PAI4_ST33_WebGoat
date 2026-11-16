@@ -25,19 +25,16 @@ jobs:
           cache: maven
 
       - name: Compilar WebGoat (MVN package)
-        run: mvn package -DskipTests
+        run: mvn --no-transfer-progress clean package -DskipTests
 
-      # SAST: Semgrep (Modo aviso - continue-on-error: true)
+      # SAST: Semgrep (Modo aviso - Gate A)
       - name: SAST - Semgrep
         continue-on-error: true
-        uses: returntocorp/semgrep-action@v1
-        with:
-          config: p/java
-          generateSarif: "1"
-        env:
-          SEMGREP_SARIF_FILE: semgrep-report.sarif
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/src" semgrep/semgrep \
+            semgrep scan --config=p/java --sarif --output=/src/semgrep-report.sarif /src
 
-      # SCA: OWASP Dependency-Check (Modo aviso - continue-on-error: true)
+      # SCA: OWASP Dependency-Check (Modo aviso - Gate A)
       - name: SCA - OWASP Dependency-Check
         continue-on-error: true
         uses: dependency-check/Dependency-Check_Action@main
@@ -45,15 +42,15 @@ jobs:
           project: 'WebGoat'
           path: '.'
           format: 'XML'
-          args: >
-            --failOnCVSS 7
+          out: 'reports'
 
-      # Subir reportes como artefactos para el job de DefectDojo
+      # Subir reportes generados
       - name: Guardar reportes estáticos
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: reportes-estaticos
+          if-no-files-found: warn
           path: |
             semgrep-report.sarif
             reports/dependency-check-report.xml
@@ -73,7 +70,7 @@ jobs:
         run: |
           docker run -d --name webgoat -p 8080:8080 webgoat/webgoat:latest
           echo "Esperando a que WebGoat arranque..."
-          sleep 30
+          sleep 35
 
       # DAST: OWASP ZAP Baseline Scan (Bloqueante si hay alertas críticas/altas)
       - name: DAST - OWASP ZAP Baseline Scan
@@ -88,6 +85,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: reporte-dast
+          if-no-files-found: warn
           path: report_xml.xml
 
   # ==========================================
@@ -105,35 +103,47 @@ jobs:
       - name: Subir SAST (Semgrep) a DefectDojo
         if: always()
         run: |
-          curl -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
-            -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
-            -F "scan_type=SARIF" \
-            -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
-            -F "file=@reportes-estaticos/semgrep-report.sarif" \
-            -F "active=true" \
-            -F "verified=false"
+          if [ -f "reportes-estaticos/semgrep-report.sarif" ]; then
+            curl -f -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
+              -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
+              -F "scan_type=SARIF" \
+              -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
+              -F "file=@reportes-estaticos/semgrep-report.sarif" \
+              -F "active=true" \
+              -F "verified=false"
+          else
+            echo "No se encontró el reporte de Semgrep."
+          fi
 
       - name: Subir SCA (Dependency-Check) a DefectDojo
         if: always()
         run: |
-          curl -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
-            -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
-            -F "scan_type=Dependency Check Scan" \
-            -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
-            -F "file=@reportes-estaticos/dependency-check-report.xml" \
-            -F "active=true" \
-            -F "verified=false"
+          if [ -f "reportes-estaticos/dependency-check-report.xml" ]; then
+            curl -f -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
+              -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
+              -F "scan_type=Dependency Check Scan" \
+              -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
+              -F "file=@reportes-estaticos/dependency-check-report.xml" \
+              -F "active=true" \
+              -F "verified=false"
+          else
+            echo "No se encontró el reporte de Dependency-Check."
+          fi
 
       - name: Subir DAST (ZAP) a DefectDojo
         if: always()
         run: |
-          curl -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
-            -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
-            -F "scan_type=ZAP Scan" \
-            -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
-            -F "file=@reporte-dast/report_xml.xml" \
-            -F "active=true" \
-            -F "verified=false"
+          if [ -f "reporte-dast/report_xml.xml" ]; then
+            curl -f -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
+              -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
+              -F "scan_type=ZAP Scan" \
+              -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
+              -F "file=@reporte-dast/report_xml.xml" \
+              -F "active=true" \
+              -F "verified=false"
+          else
+            echo "No se encontró el reporte de ZAP."
+          fi
 
   # ==========================================
   # ETAPA 4: PRODUCCIÓN EN RENDER (SI PASA GATE B)
