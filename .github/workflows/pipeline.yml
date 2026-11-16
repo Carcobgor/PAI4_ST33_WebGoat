@@ -1,0 +1,148 @@
+name: Pipeline DevSecOps - WebGoat
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  # ==========================================
+  # ETAPA 2: BUILD, SAST Y SCA (GATE A: AVISO)
+  # ==========================================
+  build-y-analisis-estatico:
+    name: 2. Build, SAST y SCA
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v4
+
+      - name: Configurar Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Compilar WebGoat (MVN package)
+        run: mvn package -DskipTests
+
+      # SAST: Semgrep (Modo aviso - continue-on-error: true)
+      - name: SAST - Semgrep
+        continue-on-error: true
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: p/java
+          generateSarif: "1"
+        env:
+          SEMGREP_SARIF_FILE: semgrep-report.sarif
+
+      # SCA: OWASP Dependency-Check (Modo aviso - continue-on-error: true)
+      - name: SCA - OWASP Dependency-Check
+        continue-on-error: true
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: 'WebGoat'
+          path: '.'
+          format: 'XML'
+          args: >
+            --failOnCVSS 7
+
+      # Subir reportes como artefactos para el job de DefectDojo
+      - name: Guardar reportes estáticos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reportes-estaticos
+          path: |
+            semgrep-report.sarif
+            reports/dependency-check-report.xml
+
+  # ==========================================
+  # ETAPA 3: PRUEBAS DAST (GATE B: BLOQUEANTE)
+  # ==========================================
+  pruebas-dast:
+    name: 3. Pruebas DAST (OWASP ZAP)
+    needs: build-y-analisis-estatico
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v4
+
+      - name: Desplegar WebGoat en Docker
+        run: |
+          docker run -d --name webgoat -p 8080:8080 webgoat/webgoat:latest
+          echo "Esperando a que WebGoat arranque..."
+          sleep 30
+
+      # DAST: OWASP ZAP Baseline Scan (Bloqueante si hay alertas críticas/altas)
+      - name: DAST - OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: 'http://localhost:8080/WebGoat'
+          cmd_options: '-l FAIL'
+          allow_issue_writing: false
+
+      - name: Guardar reporte DAST
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reporte-dast
+          path: report_xml.xml
+
+  # ==========================================
+  # ENVÍO CENTRALIZADO A DEFECTDOJO (SIEMPRE)
+  # ==========================================
+  importar-defectdojo:
+    name: Enviar informes a DefectDojo
+    needs: [build-y-analisis-estatico, pruebas-dast]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar todos los reportes
+        uses: actions/download-artifact@v4
+
+      - name: Subir SAST (Semgrep) a DefectDojo
+        if: always()
+        run: |
+          curl -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
+            -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
+            -F "scan_type=SARIF" \
+            -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
+            -F "file=@reportes-estaticos/semgrep-report.sarif" \
+            -F "active=true" \
+            -F "verified=false"
+
+      - name: Subir SCA (Dependency-Check) a DefectDojo
+        if: always()
+        run: |
+          curl -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
+            -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
+            -F "scan_type=Dependency Check Scan" \
+            -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
+            -F "file=@reportes-estaticos/dependency-check-report.xml" \
+            -F "active=true" \
+            -F "verified=false"
+
+      - name: Subir DAST (ZAP) a DefectDojo
+        if: always()
+        run: |
+          curl -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
+            -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
+            -F "scan_type=ZAP Scan" \
+            -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
+            -F "file=@reporte-dast/report_xml.xml" \
+            -F "active=true" \
+            -F "verified=false"
+
+  # ==========================================
+  # ETAPA 4: PRODUCCIÓN EN RENDER (SI PASA GATE B)
+  # ==========================================
+  despliegue-produccion:
+    name: 4. Despliegue en Render
+    needs: pruebas-dast
+    if: success() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Disparar despliegue en Render
+        run: curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
