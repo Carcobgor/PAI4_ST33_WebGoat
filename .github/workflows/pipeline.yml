@@ -39,7 +39,8 @@ jobs:
         continue-on-error: true
         run: |
           docker run --rm -v "${{ github.workspace }}:/src" aquasec/trivy:latest \
-            fs --scanners vuln --format json --output /src/trivy-sca-report.json /src
+            fs --scanners vuln --format json /src > "${{ github.workspace }}/trivy-sca-report.json"
+          ls -lh "${{ github.workspace }}/trivy-sca-report.json"
   
       # Subir reportes generados
       - name: Guardar reportes estáticos
