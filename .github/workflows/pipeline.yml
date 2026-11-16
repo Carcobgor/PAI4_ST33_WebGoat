@@ -34,15 +34,16 @@ jobs:
           docker run --rm -v "${{ github.workspace }}:/src" semgrep/semgrep \
             semgrep scan --config=p/java --sarif --output=/src/semgrep-report.sarif /src
 
-      # SCA: OWASP Dependency-Check (Modo aviso - Gate A)
-      - name: SCA - OWASP Dependency-Check
+      # SCA: Trivy sobre dependencias Maven/pom.xml (Modo aviso - Gate A)
+      - name: SCA - Trivy (Dependencias)
         continue-on-error: true
-        uses: dependency-check/Dependency-Check_Action@main
+        uses: aquasecurity/trivy-action@0.28.0
         with:
-          project: 'WebGoat'
-          path: '.'
-          format: 'XML'
-          out: 'reports'
+          scan-type: 'fs'
+          scan-ref: '.'
+          scanners: 'vuln'
+          format: 'json'
+          output: 'trivy-sca-report.json'
 
       # Subir reportes generados
       - name: Guardar reportes estáticos
@@ -53,7 +54,7 @@ jobs:
           if-no-files-found: warn
           path: |
             semgrep-report.sarif
-            reports/dependency-check-report.xml
+            trivy-sca-report.json
 
   # ==========================================
   # ETAPA 3: PRUEBAS DAST (GATE B: BLOQUEANTE)
@@ -104,16 +105,13 @@ jobs:
       - name: Descargar todos los reportes
         uses: actions/download-artifact@v4
 
-      - name: Listar archivos descargados
-        run: find . -maxdepth 4 -type f
-
       - name: Subir SAST (Semgrep) a DefectDojo
         if: always()
         run: |
           FILE=$(find . -name "semgrep-report.sarif" | head -n 1)
-          echo "Archivo SAST encontrado: $FILE"
-          if [ -z "$FILE" ]; then exit 1; fi
-          CODE=$(curl -s -o resp_sast.txt -w "%{http_code}" -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
+          echo "Archivo SAST: $FILE"
+          [ -n "$FILE" ] || exit 1
+          CODE=$(curl -s -L -o resp_sast.txt -w "%{http_code}" -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
             -F "scan_type=SARIF" \
             -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
@@ -124,15 +122,15 @@ jobs:
           cat resp_sast.txt
           [ "$CODE" -eq 201 ] || exit 1
 
-      - name: Subir SCA (Dependency-Check) a DefectDojo
+      - name: Subir SCA (Trivy) a DefectDojo
         if: always()
         run: |
-          FILE=$(find . -name "dependency-check-report.xml" | head -n 1)
-          echo "Archivo SCA encontrado: $FILE"
-          if [ -z "$FILE" ]; then exit 1; fi
-          CODE=$(curl -s -o resp_sca.txt -w "%{http_code}" -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
+          FILE=$(find . -name "trivy-sca-report.json" | head -n 1)
+          echo "Archivo SCA: $FILE"
+          [ -n "$FILE" ] || exit 1
+          CODE=$(curl -s -L -o resp_sca.txt -w "%{http_code}" -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
-            -F "scan_type=Dependency Check Scan" \
+            -F "scan_type=Trivy Scan" \
             -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
             -F "file=@$FILE" \
             -F "active=true" \
@@ -145,9 +143,9 @@ jobs:
         if: always()
         run: |
           FILE=$(find . -name "report_xml.xml" | head -n 1)
-          echo "Archivo DAST encontrado: $FILE"
-          if [ -z "$FILE" ]; then exit 1; fi
-          CODE=$(curl -s -o resp_dast.txt -w "%{http_code}" -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
+          echo "Archivo DAST: $FILE"
+          [ -n "$FILE" ] || exit 1
+          CODE=$(curl -s -L -o resp_dast.txt -w "%{http_code}" -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
             -F "scan_type=ZAP Scan" \
             -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
