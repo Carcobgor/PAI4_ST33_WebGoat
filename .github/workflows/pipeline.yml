@@ -52,8 +52,8 @@ jobs:
           name: reportes-estaticos
           if-no-files-found: warn
           path: |
-            semgrep-report.sarif
-            reports/dependency-check-report.xml
+            **/semgrep-report.sarif
+            **/reports/dependency-check-report.xml
 
   # ==========================================
   # ETAPA 3: PRUEBAS DAST (GATE B: BLOQUEANTE)
@@ -104,50 +104,59 @@ jobs:
       - name: Descargar todos los reportes
         uses: actions/download-artifact@v4
 
+      - name: Listar archivos descargados
+        run: find . -maxdepth 4 -type f
+
       - name: Subir SAST (Semgrep) a DefectDojo
         if: always()
         run: |
-          if [ -f "reportes-estaticos/semgrep-report.sarif" ]; then
-            curl -f -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
-              -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
-              -F "scan_type=SARIF" \
-              -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
-              -F "file=@reportes-estaticos/semgrep-report.sarif" \
-              -F "active=true" \
-              -F "verified=false"
-          else
-            echo "No se encontró el reporte de Semgrep."
-          fi
+          FILE=$(find . -name "semgrep-report.sarif" | head -n 1)
+          echo "Archivo SAST encontrado: $FILE"
+          if [ -z "$FILE" ]; then exit 1; fi
+          CODE=$(curl -s -o resp_sast.txt -w "%{http_code}" -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
+            -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
+            -F "scan_type=SARIF" \
+            -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
+            -F "file=@$FILE" \
+            -F "active=true" \
+            -F "verified=true")
+          echo "HTTP Status SAST: $CODE"
+          cat resp_sast.txt
+          [ "$CODE" -eq 201 ] || exit 1
 
       - name: Subir SCA (Dependency-Check) a DefectDojo
         if: always()
         run: |
-          if [ -f "reportes-estaticos/dependency-check-report.xml" ]; then
-            curl -f -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
-              -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
-              -F "scan_type=Dependency Check Scan" \
-              -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
-              -F "file=@reportes-estaticos/dependency-check-report.xml" \
-              -F "active=true" \
-              -F "verified=false"
-          else
-            echo "No se encontró el reporte de Dependency-Check."
-          fi
+          FILE=$(find . -name "dependency-check-report.xml" | head -n 1)
+          echo "Archivo SCA encontrado: $FILE"
+          if [ -z "$FILE" ]; then exit 1; fi
+          CODE=$(curl -s -o resp_sca.txt -w "%{http_code}" -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
+            -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
+            -F "scan_type=Dependency Check Scan" \
+            -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
+            -F "file=@$FILE" \
+            -F "active=true" \
+            -F "verified=true")
+          echo "HTTP Status SCA: $CODE"
+          cat resp_sca.txt
+          [ "$CODE" -eq 201 ] || exit 1
 
       - name: Subir DAST (ZAP) a DefectDojo
         if: always()
         run: |
-          if [ -f "reporte-dast/report_xml.xml" ]; then
-            curl -f -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
-              -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
-              -F "scan_type=ZAP Scan" \
-              -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
-              -F "file=@reporte-dast/report_xml.xml" \
-              -F "active=true" \
-              -F "verified=false"
-          else
-            echo "No se encontró el reporte de ZAP."
-          fi
+          FILE=$(find . -name "report_xml.xml" | head -n 1)
+          echo "Archivo DAST encontrado: $FILE"
+          if [ -z "$FILE" ]; then exit 1; fi
+          CODE=$(curl -s -o resp_dast.txt -w "%{http_code}" -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
+            -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
+            -F "scan_type=ZAP Scan" \
+            -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
+            -F "file=@$FILE" \
+            -F "active=true" \
+            -F "verified=true")
+          echo "HTTP Status DAST: $CODE"
+          cat resp_dast.txt
+          [ "$CODE" -eq 201 ] || exit 1
 
   # ==========================================
   # ETAPA 4: PRODUCCIÓN EN RENDER (SI PASA GATE B)
