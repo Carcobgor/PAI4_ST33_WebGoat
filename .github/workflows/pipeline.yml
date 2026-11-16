@@ -52,8 +52,8 @@ jobs:
           name: reportes-estaticos
           if-no-files-found: warn
           path: |
-            **/semgrep-report.sarif
-            **/reports/dependency-check-report.xml
+            semgrep-report.sarif
+            reports/dependency-check-report.xml
 
   # ==========================================
   # ETAPA 3: PRUEBAS DAST (GATE B: BLOQUEANTE)
