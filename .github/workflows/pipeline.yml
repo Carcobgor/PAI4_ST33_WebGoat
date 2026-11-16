@@ -58,7 +58,7 @@ jobs:
   # ==========================================
   # ETAPA 3: PRUEBAS DAST (GATE B: BLOQUEANTE)
   # ==========================================
-pruebas-dast:
+  pruebas-dast:
     name: 3. Pruebas DAST (OWASP ZAP)
     needs: build-y-analisis-estatico
     runs-on: ubuntu-latest
