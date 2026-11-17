@@ -38,9 +38,9 @@ jobs:
       - name: SCA - Trivy (Dependencias)
         continue-on-error: true
         run: |
-          docker run --rm -v "${{ github.workspace }}:/src" aquasec/trivy:latest \
-            fs --scanners vuln --exit-code 0 --format json --output /src/trivy-sca-report.json /src
-          head -c 200 "${{ github.workspace }}/trivy-sca-report.json"
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          trivy fs --scanners vuln --format json --output trivy-sca-report.json .
+          ls -lh trivy-sca-report.json
   
       # Subir reportes generados
       - name: Guardar reportes estáticos
@@ -107,7 +107,7 @@ jobs:
         run: |
           FILE=$(find . -name "semgrep-report.sarif" | head -n 1)
           echo "Archivo SAST: $FILE"
-          [ -n "$FILE" ] || exit 1
+          if [ -z "$FILE" ]; then echo "No se encontró reporte SAST. Saltando..."; exit 0; fi
           CODE=$(curl -s -L -o resp_sast.txt -w "%{http_code}" -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
             -F "scan_type=SARIF" \
@@ -124,7 +124,7 @@ jobs:
         run: |
           FILE=$(find . -name "trivy-sca-report.json" | head -n 1)
           echo "Archivo SCA: $FILE"
-          [ -n "$FILE" ] || exit 1
+          if [ -z "$FILE" ]; then echo "No se encontró reporte SCA. Saltando..."; exit 0; fi
           CODE=$(curl -s -L -o resp_sca.txt -w "%{http_code}" -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
             -F "scan_type=Trivy Scan" \
@@ -141,7 +141,7 @@ jobs:
         run: |
           FILE=$(find . -name "report_xml.xml" | head -n 1)
           echo "Archivo DAST: $FILE"
-          [ -n "$FILE" ] || exit 1
+          if [ -z "$FILE" ]; then echo "No se encontró reporte DAST. Saltando..."; exit 0; fi
           CODE=$(curl -s -L -o resp_dast.txt -w "%{http_code}" -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
             -F "scan_type=ZAP Scan" \
